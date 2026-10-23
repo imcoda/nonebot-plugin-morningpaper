@@ -35,4 +35,4 @@ Issues = "https://github.com/imcoda/nonebot-plugin-morningpaper/issues"
 packages = ["nonebot_plugin_morningpaper"]
 
 [tool.hatch.build.targets.sdist]
-include = ["nonebot_plugin_morningpaper", "tests", "README.md", "LICENSE", "pyproject.toml"]
+include = ["nonebot_plugin_morningpaper", "README.md", "LICENSE", "pyproject.toml"]
