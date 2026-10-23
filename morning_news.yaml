@@ -1,0 +1,79 @@
+# QQ 群早报配置（纯 RSS，无 AI）
+# 12 条上限：国内 4 / 国际 4 / 科技 2 / 医学 1 / 科学 1
+# source.count 为该源的最多条数；新闻不足时不使用旧新闻凑数。
+
+schedule:
+  time: "08:00"
+  timezone: "Asia/Shanghai"
+
+fetch:
+  lookback_hours: 24
+  timeout_seconds: 10
+  retry_times: 2
+  user_agent: "Mozilla/5.0 (compatible; MorningNewsBot/1.0)"
+
+filter:
+  sort_by: "published_desc"       # 优先最新发布的文章
+  deduplicate_url: true           # 相同链接去重
+  deduplicate_title: true         # 相同标题去重（仅完全相同）
+  exclude_keywords:
+    - "广告"
+    - "优惠券"
+    - "限时抢购"
+    - "促销"
+
+output:
+  title: "☀️ 今日早报"
+  max_items: 12
+  show_category: true
+  show_source: true
+  show_link: true
+  use_rss_description: false     # 仅输出原标题、来源和原文链接
+  ai_enabled: false              # 不调用任何 AI 模型
+  allow_old_news_to_fill: false  # 无新闻时保留空缺，不跨天补位
+
+sources:
+  - name: "中国新闻网·时政"
+    category: "国内要闻"
+    count: 2
+    url: "https://www.chinanews.com.cn/rss/china.xml"
+
+  - name: "中国新闻网·社会"
+    category: "国内社会"
+    count: 1
+    url: "https://www.chinanews.com.cn/rss/society.xml"
+
+  - name: "中国新闻网·财经"
+    category: "财经要闻"
+    count: 1
+    url: "https://www.chinanews.com.cn/rss/finance.xml"
+
+  - name: "中国新闻网·国际"
+    category: "国际要闻"
+    count: 3
+    url: "https://www.chinanews.com.cn/rss/world.xml"
+
+  - name: "人民网·国际"
+    category: "国际补充"
+    count: 1
+    url: "https://www.people.com.cn/rss/world.xml"
+
+  - name: "IT之家"
+    category: "科技资讯"
+    count: 1
+    url: "https://www.ithome.com/rss/"
+
+  - name: "36氪·文章"
+    category: "科技商业"
+    count: 1
+    url: "https://36kr.com/feed-article"
+
+  - name: "中国新闻网·健康"
+    category: "医学健康"
+    count: 1
+    url: "https://www.chinanews.com.cn/rss/jk.xml"
+
+  - name: "科学网·综合新闻"
+    category: "科学研究"
+    count: 1
+    url: "http://www.sciencenet.cn/xml/news-0.aspx?news=0"
