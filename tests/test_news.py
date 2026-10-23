@@ -1,8 +1,12 @@
 import asyncio
+import importlib.util
+import os
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
 import sys
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 from xml.sax.saxutils import escape
@@ -42,7 +46,7 @@ def rss(*items):
 
 class FeedTests(unittest.TestCase):
     def test_supplied_yaml_quotas_and_schedule(self):
-        cfg = load_config(ROOT / "morning_news.yaml")
+        cfg = load_config(ROOT / "nonebot_plugin_morningpaper" / "morning_news.yaml")
         self.assertEqual(cfg.schedule.time, "08:00")
         self.assertEqual(cfg.schedule.timezone, "Asia/Shanghai")
         self.assertEqual(sum(s.count for s in cfg.sources), 13)
@@ -234,6 +238,60 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 1)
         self.assertEqual(result.items, [])
         self.assertIn("404", result.error)
+
+
+@unittest.skipUnless(importlib.util.find_spec("nonebot"), "NoneBot is required for plugin load tests")
+class PluginLoadTests(unittest.TestCase):
+    def check_load(self, env_text="", expected_groups=None, expected_max=12, disabled=False):
+        script = '''
+import nonebot
+from nonebot.adapters.onebot.v11 import Adapter
+from unittest.mock import AsyncMock, patch
+nonebot.init(_env_file=".env.prod", driver="~fastapi")
+with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as request:
+    plugin = nonebot.load_plugin("nonebot_plugin_morningpaper")
+    assert plugin is not None, "plugin failed to load"
+    request.assert_not_called()
+module = plugin.module
+assert module.GROUPS == EXPECTED_GROUPS
+assert module.CONFIG.output.max_items == EXPECTED_MAX
+assert plugin.metadata.config is module.Config
+assert plugin.metadata.get_supported_adapters() == {Adapter}
+assert module.config_path.name == "morning_news.yaml"
+assert module.config_path.is_file()
+if DISABLED:
+    assert not module.CONFIG.sources[0].enabled
+    assert module.CONFIG.sources[0].count == 0
+job = module.scheduler.get_job("morningpaper")
+assert str(job.trigger.timezone) == "Asia/Shanghai"
+print("PLUGIN_LOAD_OK")
+'''
+        script = (
+            f"EXPECTED_GROUPS={expected_groups or []!r}\n"
+            f"EXPECTED_MAX={expected_max!r}\nDISABLED={disabled!r}\n" + script
+        )
+        env = {key: value for key, value in os.environ.items() if not key.upper().startswith("MORNINGPAPER_")}
+        env["PYTHONPATH"] = str(ROOT)
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, ".env.prod").write_text(env_text, encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, "-c", script], cwd=folder, env=env,
+                text=True, capture_output=True, timeout=30,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PLUGIN_LOAD_OK", result.stdout)
+
+    def test_loads_without_groups_or_external_yaml_and_does_not_fetch(self):
+        self.check_load()
+
+    def test_real_dotenv_parses_groups_and_source_overrides(self):
+        self.check_load(
+            "MORNINGPAPER_GROUPS=[123456789,123456789]\n"
+            "MORNINGPAPER_MAX_ITEMS=5\n"
+            "MORNINGPAPER_ZHEJIANG_ENABLED=false\n"
+            "MORNINGPAPER_ZHEJIANG_COUNT=0\n",
+            expected_groups=[123456789], expected_max=5, disabled=True,
+        )
 
 
 if __name__ == "__main__":

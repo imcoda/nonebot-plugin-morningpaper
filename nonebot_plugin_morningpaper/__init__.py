@@ -1,35 +1,42 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
+from typing import Optional
 
-from nonebot import get_bot, get_driver, on_regex, require
+from nonebot import get_bot, get_driver, get_plugin_config, on_regex, require
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageEvent, MessageSegment
 from nonebot.log import logger
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
+from pydantic import BaseModel, Field
 
 from .news import apply_env_overrides, collect_sources, format_digest, load_config, select_news
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
 
+
+class Config(BaseModel):
+    morningpaper_groups: list[int] = Field(default_factory=list)
+    morningpaper_config: Optional[Path] = None
+    morningpaper_max_items: Optional[int] = Field(None, ge=1, le=100)
+
+
 __plugin_meta__ = PluginMetadata(
-    name="nonebot-plugin-morningpaper",
-    description="按 YAML 配置定时推送最近 24 小时的分类 RSS 早报。",
+    name="早报",
+    description="定时推送 RSS 新闻和浙江宣传，支持农历标题及来源开关。",
     usage="早报：立即查看早报\n发送早报：超级用户立即推送到当前群或配置群",
     type="application",
-    homepage="https://github.com/PeachCoda/nonebot-plugin-morningpaper",
+    homepage="https://github.com/imcoda/nonebot-plugin-morningpaper",
+    config=Config,
     supported_adapters={"~onebot.v11"},
 )
 
 driver_config = get_driver().config
-group_values = getattr(driver_config, "morningpaper_groups", [])
-if isinstance(group_values, str):
-    group_values = json.loads(group_values)
-GROUPS = list(dict.fromkeys(int(value) for value in group_values))
+plugin_config = get_plugin_config(Config)
+GROUPS = list(dict.fromkeys(plugin_config.morningpaper_groups))
 
-config_path = getattr(driver_config, "morningpaper_config", None)
+config_path = plugin_config.morningpaper_config
 if config_path is None:
     config_path = Path.cwd() / "morning_news.yaml"
     if not config_path.is_file():

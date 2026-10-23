@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nonebot-plugin-morningpaper"
-version = "0.3.0"
+version = "0.3.1"
 description = "NoneBot2 群聊早报插件，支持 RSS、浙江宣传、农历标题及来源开关。"
 readme = "README.md"
 requires-python = ">=3.9,<4.0"
@@ -27,11 +27,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/PeachCoda/nonebot-plugin-morningpaper"
-Repository = "https://github.com/PeachCoda/nonebot-plugin-morningpaper"
+Homepage = "https://github.com/imcoda/nonebot-plugin-morningpaper"
+Repository = "https://github.com/imcoda/nonebot-plugin-morningpaper"
+Issues = "https://github.com/imcoda/nonebot-plugin-morningpaper/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["nonebot_plugin_morningpaper"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"morning_news.yaml" = "nonebot_plugin_morningpaper/morning_news.yaml"
+[tool.hatch.build.targets.sdist]
+include = ["nonebot_plugin_morningpaper", "tests", "README.md", "LICENSE", "pyproject.toml"]
