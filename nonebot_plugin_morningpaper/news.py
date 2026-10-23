@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import calendar
+from collections.abc import Mapping
 import html
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, Optional
 from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 import feedparser
 import httpx
 import yaml
+from bs4 import BeautifulSoup
+from lunar_python import Solar
 
 try:
     from pydantic.v1 import BaseModel, Field, validator
@@ -59,7 +62,8 @@ class FilterConfig(ConfigModel):
 class OutputConfig(ConfigModel):
     title: str = "今日早报"
     max_items: int = Field(12, ge=1, le=100)
-    show_category: bool = True
+    show_category: bool = False
+    show_lunar: bool = True
     show_source: bool = True
     show_link: bool = True
     use_rss_description: Literal[False] = False
@@ -68,9 +72,12 @@ class OutputConfig(ConfigModel):
 
 
 class SourceConfig(ConfigModel):
+    id: Optional[str] = Field(None, regex=r"^[a-z][a-z0-9_]*$")
     name: str = Field(..., min_length=1)
     category: str = Field(..., min_length=1)
-    count: int = Field(..., ge=1, le=100)
+    enabled: bool = True
+    count: int = Field(..., ge=0, le=100)
+    type: Literal["rss", "zjol"] = "rss"
     url: str
 
     @validator("url")
@@ -88,12 +95,34 @@ class NewsConfig(ConfigModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
     sources: list[SourceConfig] = Field(..., min_items=1)
 
+    @validator("sources")
+    def unique_source_ids(cls, sources: list[SourceConfig]) -> list[SourceConfig]:
+        ids = [source.id for source in sources if source.id is not None]
+        if len(set(ids)) != len(ids):
+            raise ValueError("source IDs must be unique")
+        return sources
+
 
 def load_config(path: Path) -> NewsConfig:
     with path.open(encoding="utf-8-sig") as file:
         data = yaml.safe_load(file)
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a YAML mapping")
+    return NewsConfig.parse_obj(data)
+
+
+def apply_env_overrides(config: NewsConfig, values: Mapping[str, Any]) -> NewsConfig:
+    values = {key.lower(): value for key, value in values.items()}
+    data = config.dict()
+    for source in data["sources"]:
+        if not source["id"]:
+            continue
+        prefix = f"morningpaper_{source['id']}_"
+        for field in ("enabled", "count"):
+            if prefix + field in values:
+                source[field] = values[prefix + field]
+    if "morningpaper_max_items" in values:
+        data["output"]["max_items"] = values["morningpaper_max_items"]
     return NewsConfig.parse_obj(data)
 
 
@@ -123,6 +152,31 @@ def _clean_text(value: str) -> str:
     return " ".join(html.unescape(value).split())
 
 
+def _append_item(
+    result: SourceResult,
+    title: str,
+    link: str,
+    published: datetime | None,
+    config: NewsConfig,
+    now: datetime,
+) -> None:
+    cutoff = now - timedelta(hours=config.fetch.lookback_hours)
+    if published is None or not cutoff <= published <= now:
+        result.skipped_dates += 1
+        return
+    title = _clean_text(title)
+    url = urljoin(result.source.url, link.strip()) if link else ""
+    try:
+        parsed_url = urlsplit(url)
+    except ValueError:
+        return
+    if not title or parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+        return
+    if any(keyword in title for keyword in config.filter.exclude_keywords if keyword):
+        return
+    result.items.append(NewsItem(title, url, published))
+
+
 def parse_feed(
     content: bytes, source: SourceConfig, config: NewsConfig, now: datetime
 ) -> SourceResult:
@@ -130,24 +184,43 @@ def parse_feed(
     if not feed.version or (feed.bozo and not feed.entries):
         raise ValueError("response is not a readable RSS/Atom feed")
     result = SourceResult(source)
-    cutoff = now - timedelta(hours=config.fetch.lookback_hours)
     for entry in feed.entries:
         # An updated date must not make an already old publication appear new.
         date = entry.get("published_parsed") if entry.get("published") else entry.get("updated_parsed")
         try:
             published = datetime.fromtimestamp(calendar.timegm(date), timezone.utc) if date else None
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError, OverflowError, OSError):
             published = None
-        if published is None or not cutoff <= published <= now:
-            result.skipped_dates += 1
+        _append_item(
+            result, str(entry.get("title", "")), str(entry.get("link") or ""),
+            published, config, now,
+        )
+    result.items.sort(key=lambda item: item.published, reverse=True)
+    return result
+
+
+def parse_zjol(
+    content: bytes, source: SourceConfig, config: NewsConfig, now: datetime
+) -> SourceResult:
+    soup = BeautifulSoup(content, "html.parser", from_encoding="utf-8")
+    rows = soup.select("ul.listUl li.listLi")
+    if not rows:
+        raise ValueError("Zhejiang column layout is unavailable or has changed")
+    result = SourceResult(source)
+    for row in rows:
+        anchor, date_node = row.select_one("a[href]"), row.select_one("span.listSpan")
+        if anchor is None:
             continue
-        title = _clean_text(str(entry.get("title", "")))
-        url = urljoin(source.url, str(entry.get("link", "")).strip()) if entry.get("link") else ""
-        if not title or urlsplit(url).scheme not in {"http", "https"}:
-            continue
-        if any(keyword in title for keyword in config.filter.exclude_keywords if keyword):
-            continue
-        result.items.append(NewsItem(title, url, published))
+        try:
+            published = datetime.strptime(
+                date_node.get_text(strip=True) if date_node else "", "%Y年%m月%d日%H时"
+            ).replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        except ValueError:
+            published = None
+        _append_item(
+            result, anchor.get_text(" ", strip=True), str(anchor.get("href") or ""),
+            published, config, now,
+        )
     result.items.sort(key=lambda item: item.published, reverse=True)
     return result
 
@@ -164,7 +237,8 @@ async def fetch_source(
             async with semaphore:
                 response = await client.get(source.url, timeout=config.fetch.timeout_seconds)
                 response.raise_for_status()
-                return await asyncio.to_thread(parse_feed, response.content, source, config, now)
+                parser = parse_zjol if source.type == "zjol" else parse_feed
+                return await asyncio.to_thread(parser, response.content, source, config, now)
         except (httpx.HTTPError, ValueError) as exc:
             permanent = (
                 isinstance(exc, httpx.HTTPStatusError)
@@ -186,7 +260,8 @@ async def collect_sources(config: NewsConfig, now: datetime | None = None) -> li
         trust_env=False,
     ) as client:
         return await asyncio.gather(
-            *(fetch_source(client, source, config, now, semaphore) for source in config.sources)
+            *(fetch_source(client, source, config, now, semaphore)
+              for source in config.sources if source.enabled and source.count > 0)
         )
 
 
@@ -196,6 +271,8 @@ def select_news(results: list[SourceResult], config: NewsConfig) -> list[Selecte
     seen_titles: set[str] = set()
     # Apply each source's quota in YAML order; duplicates do not consume quota.
     for result in results:
+        if not result.source.enabled:
+            continue
         count = 0
         for item in sorted(result.items, key=lambda item: item.published, reverse=True):
             if len(selected) >= config.output.max_items or count >= result.source.count:
@@ -215,7 +292,12 @@ def format_digest(
     selected: list[SelectedNews], config: NewsConfig, now: datetime | None = None
 ) -> str:
     now = now or datetime.now(timezone.utc)
-    date = now.astimezone(ZoneInfo(config.schedule.timezone)).strftime("%Y-%m-%d")
+    local_now = now.astimezone(ZoneInfo(config.schedule.timezone))
+    if config.output.show_lunar:
+        lunar = Solar.fromDate(local_now).getLunar()
+        date = f"农历{lunar.getMonthInChinese()}月{lunar.getDayInChinese()}"
+    else:
+        date = local_now.strftime("%Y-%m-%d")
     lines = [f"{config.output.title} {date}"]
     last_category = None
     for index, news in enumerate(selected, 1):

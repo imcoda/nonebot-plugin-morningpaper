@@ -10,7 +10,7 @@ from nonebot.log import logger
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 
-from .news import collect_sources, format_digest, load_config, select_news
+from .news import apply_env_overrides, collect_sources, format_digest, load_config, select_news
 
 scheduler = require("nonebot_plugin_apscheduler").scheduler
 
@@ -34,7 +34,8 @@ if config_path is None:
     config_path = Path.cwd() / "morning_news.yaml"
     if not config_path.is_file():
         config_path = Path(__file__).with_name("morning_news.yaml")
-CONFIG = load_config(Path(config_path))
+env_values = driver_config.model_dump() if hasattr(driver_config, "model_dump") else driver_config.dict()
+CONFIG = apply_env_overrides(load_config(Path(config_path)), env_values)
 _build_lock = asyncio.Lock()
 
 

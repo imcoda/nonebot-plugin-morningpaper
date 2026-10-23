@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nonebot-plugin-morningpaper"
-version = "0.2.0"
-description = "NoneBot2 群聊 RSS 早报插件，按 YAML 配置定时推送分类新闻。"
+version = "0.3.0"
+description = "NoneBot2 群聊早报插件，支持 RSS、浙江宣传、农历标题及来源开关。"
 readme = "README.md"
 requires-python = ">=3.9,<4.0"
 license = "MIT"
@@ -21,6 +21,8 @@ dependencies = [
     "feedparser>=6.0.11,<7.0.0",
     "PyYAML>=6.0,<7.0",
     "pydantic>=1.10.0,<3.0.0",
+    "beautifulsoup4>=4.12,<5",
+    "lunar-python>=1.4,<2",
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 

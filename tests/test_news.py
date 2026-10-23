@@ -13,7 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "nonebot_plugin_mor
 
 from news import (
     NewsConfig, NewsItem, SourceConfig, SourceResult, fetch_source,
-    format_digest, load_config, parse_feed, select_news,
+    apply_env_overrides, collect_sources, format_digest, load_config,
+    parse_feed, parse_zjol, select_news,
 )
 
 NOW = datetime(2026, 10, 23, 0, 0, tzinfo=timezone.utc)
@@ -44,10 +45,13 @@ class FeedTests(unittest.TestCase):
         cfg = load_config(ROOT / "morning_news.yaml")
         self.assertEqual(cfg.schedule.time, "08:00")
         self.assertEqual(cfg.schedule.timezone, "Asia/Shanghai")
-        self.assertEqual(sum(s.count for s in cfg.sources), 12)
-        self.assertEqual(len(cfg.sources), 9)
+        self.assertEqual(sum(s.count for s in cfg.sources), 13)
+        self.assertEqual(len(cfg.sources), 10)
         self.assertEqual(cfg.output.max_items, 12)
         self.assertFalse(cfg.output.ai_enabled)
+        self.assertFalse(cfg.output.show_category)
+        self.assertEqual(cfg.output.title, "今日早报")
+        self.assertEqual(cfg.sources[0].id, "zhejiang")
 
     def test_date_window_and_sorting(self):
         cfg = config()
@@ -114,7 +118,7 @@ class FeedTests(unittest.TestCase):
         a = source()
         item = NewsItem("Original", "https://example.com/article", NOW)
         selected = select_news([SourceResult(a, [item])], config(a))
-        full = format_digest(selected, config(a), NOW)
+        full = format_digest(selected, config(a, output={"show_category": True}), NOW)
         self.assertIn("【Source】", full)
         self.assertIn("来源：Source", full)
         self.assertIn(item.url, full)
@@ -128,8 +132,80 @@ class FeedTests(unittest.TestCase):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 config(**values)
 
+    def test_env_overrides_are_validated_and_do_not_mutate_yaml(self):
+        cfg = config(SourceConfig(id="zhejiang", name="Zhejiang", category="Opinion", count=1, url="https://example.com/rss"))
+        modified = apply_env_overrides(cfg, {
+            "MORNINGPAPER_ZHEJIANG_ENABLED": "false",
+            "morningpaper_zhejiang_count": "3",
+            "morningpaper_max_items": "20",
+        })
+        self.assertFalse(modified.sources[0].enabled)
+        self.assertEqual(modified.sources[0].count, 3)
+        self.assertEqual(modified.output.max_items, 20)
+        self.assertTrue(cfg.sources[0].enabled)
+        self.assertEqual(cfg.sources[0].count, 1)
+        for key, value in [("COUNT", "-1"), ("COUNT", "abc"), ("ENABLED", "maybe")]:
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                apply_env_overrides(cfg, {f"MORNINGPAPER_ZHEJIANG_{key}": value})
+
+    def test_duplicate_ids_rejected_and_legacy_source_without_id_allowed(self):
+        a = source()
+        self.assertIsNone(apply_env_overrides(config(a), {}).sources[0].id)
+        duplicate = SourceConfig(id="same", name="Same", category="Same", count=1, url="https://example.com/rss")
+        with self.assertRaises(ValueError):
+            config(duplicate, duplicate)
+
+    def test_lunar_heading_at_timezone_boundary_and_leap_month(self):
+        cfg = config()
+        new_year = datetime(2026, 2, 16, 16, 0, tzinfo=timezone.utc)
+        heading = format_digest([], cfg, new_year).splitlines()[0]
+        self.assertEqual(heading, "今日早报 农历正月初一")
+        before = format_digest([], cfg, new_year - timedelta(seconds=1)).splitlines()[0]
+        self.assertNotEqual(before, heading)
+        leap = format_digest([], cfg, datetime(2025, 7, 25, 0, tzinfo=timezone.utc))
+        self.assertIn("农历闰六月初一", leap)
+        solar = format_digest([], config(output={"show_lunar": False}), new_year)
+        self.assertTrue(solar.startswith("今日早报 2026-02-17"))
+
+    def test_default_output_has_no_category_headings(self):
+        cfg = config()
+        item = NewsItem("Article", "https://example.com/article", NOW)
+        message = format_digest(select_news([SourceResult(cfg.sources[0], [item])], cfg), cfg, NOW)
+        self.assertNotIn("【", message)
+        self.assertNotIn("☀", message)
+
+    def test_zhejiang_official_column_dates_and_links(self):
+        cfg = config(SourceConfig(id="zhejiang", type="zjol", name="Zhejiang", category="Opinion", count=1, url="https://zjnews.zjol.com.cn/zjxc/"))
+        document = '''<html><body><a href="/navigation">Not an article</a>
+        <ul class="listUl">
+          <li class="listLi"><span class="listSpan">2026年10月23日07时</span>
+            <a href="//zjnews.zjol.com.cn/zjxc/new.shtml">浙江宣传 | 新文章</a></li>
+          <li class="listLi"><span class="listSpan">2026年10月20日07时</span>
+            <a href="/old.shtml">Old article</a></li>
+          <li class="listLi"><span class="listSpan">Invalid</span>
+            <a href="/undated.shtml">Undated article</a></li>
+        </ul></body></html>'''.encode()
+        result = parse_zjol(document, cfg.sources[0], cfg, NOW)
+        self.assertEqual([item.title for item in result.items], ["浙江宣传 | 新文章"])
+        self.assertEqual(result.items[0].url, "https://zjnews.zjol.com.cn/zjxc/new.shtml")
+        self.assertEqual(result.items[0].published, NOW - timedelta(hours=1))
+        self.assertEqual(result.skipped_dates, 2)
+        with self.assertRaises(ValueError):
+            parse_zjol(b"<html>Access denied</html>", cfg.sources[0], cfg, NOW)
+
 
 class FetchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disabled_and_zero_count_sources_make_no_requests(self):
+        cfg = config(source("Disabled"), source("Zero"), source("Active"))
+        cfg.sources[0].enabled = False
+        cfg.sources[1].count = 0
+        with patch("news.fetch_source", new_callable=AsyncMock) as fetch:
+            fetch.return_value = SourceResult(cfg.sources[2])
+            results = await collect_sources(cfg, NOW)
+        self.assertEqual(fetch.await_count, 1)
+        self.assertEqual(fetch.await_args.args[1].name, "Active")
+        self.assertEqual(len(results), 1)
+
     async def test_transient_failure_retries_twice(self):
         calls = 0
         def handle(request):
