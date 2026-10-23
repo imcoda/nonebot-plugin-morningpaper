@@ -4,7 +4,7 @@
 # 每个源可用 MORNINGPAPER_<ID>_ENABLED / COUNT 覆盖 enabled / count。
 
 schedule:
-  time: "08:00"
+  time: "08:00"                 # 可用 .env.prod 的 MORNINGPAPER_TIME 覆盖
   timezone: "Asia/Shanghai"
 
 fetch:
@@ -84,13 +84,6 @@ sources:
     enabled: true
     count: 1
     url: "https://www.ithome.com/rss/"
-
-  - id: kr36
-    name: "36氪·文章"
-    category: "科技商业"
-    enabled: true
-    count: 1
-    url: "https://36kr.com/feed-article"
 
   - id: health
     name: "中国新闻网·健康"

@@ -21,6 +21,9 @@ NoneBot2 群聊早报插件，支持 RSS 新闻、浙江宣传、农历标题和
 # 定时推送的 QQ 群；不填时仍可手动查看早报
 MORNINGPAPER_GROUPS=[123456789]
 
+# 每天的发报时间，24 小时制 HH:MM，默认时区为北京时间
+MORNINGPAPER_TIME="08:00"
+
 # 可选：自定义 YAML 路径，不填使用内置配置
 # MORNINGPAPER_CONFIG="./morning_news.yaml"
 
@@ -40,9 +43,12 @@ MORNINGPAPER_DOMESTIC_COUNT=2
 | --- | --- | --- |
 | `MORNINGPAPER_GROUPS` | `list[int]` | `[]` |
 | `MORNINGPAPER_CONFIG` | 文件路径 | 优先使用运行目录同名 YAML，否则使用内置配置 |
+| `MORNINGPAPER_TIME` | `str`，格式 `HH:MM` | YAML 中的 `schedule.time`，内置为 `08:00` |
 | `MORNINGPAPER_MAX_ITEMS` | `int` | YAML 中的 `output.max_items`，内置为 `12` |
 
 每个来源均可通过 `MORNINGPAPER_<ID大写>_ENABLED` 和 `MORNINGPAPER_<ID大写>_COUNT` 控制。环境配置优先于 YAML；设为 `false` 或条数 `0` 均停止获取该来源。
+
+例如 `MORNINGPAPER_TIME="08:30"` 表示每天 08:30 发报，使用 YAML 中的 `schedule.timezone` 时区；修改后重启生效。时间格式错误会报错。
 
 | ID | 来源 | 默认条数 |
 | --- | --- | --- |
@@ -53,7 +59,6 @@ MORNINGPAPER_DOMESTIC_COUNT=2
 | `world` | 中新网国际 | 3 |
 | `people_world` | 人民网国际 | 1 |
 | `ithome` | IT之家 | 1 |
-| `kr36` | 36氪 | 1 |
 | `health` | 中新网健康 | 1 |
 | `science` | 科学网 | 1 |
 

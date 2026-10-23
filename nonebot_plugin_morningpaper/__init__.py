@@ -19,6 +19,7 @@ scheduler = require("nonebot_plugin_apscheduler").scheduler
 class Config(BaseModel):
     morningpaper_groups: list[int] = Field(default_factory=list)
     morningpaper_config: Optional[Path] = None
+    morningpaper_time: Optional[str] = None
     morningpaper_max_items: Optional[int] = Field(None, ge=1, le=100)
 
 

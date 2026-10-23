@@ -123,6 +123,8 @@ def apply_env_overrides(config: NewsConfig, values: Mapping[str, Any]) -> NewsCo
                 source[field] = values[prefix + field]
     if "morningpaper_max_items" in values:
         data["output"]["max_items"] = values["morningpaper_max_items"]
+    if "morningpaper_time" in values:
+        data["schedule"]["time"] = values["morningpaper_time"]
     return NewsConfig.parse_obj(data)
 
 

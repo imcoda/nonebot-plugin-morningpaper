@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nonebot-plugin-morningpaper"
-version = "0.3.1"
+version = "0.3.2"
 description = "NoneBot2 群聊早报插件，支持 RSS、浙江宣传、农历标题及来源开关。"
 readme = "README.md"
 requires-python = ">=3.9,<4.0"
